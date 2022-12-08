@@ -1,0 +1,245 @@
+#include <ncurses.h>
+#include "hfsplus.h"
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <ctype.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+
+int fd;
+char *mapFile(char *filePath);
+unsigned long valorhex(int ini, int fin, char *map){
+
+ unsigned long Cant=0;
+
+ int au;
+ int j=1;
+ for(int i=ini; i<=fin; i++){
+     au=(int)map[i];
+     if(au<0)
+       au+=256;
+     Cant+=(au *(j));
+     j*=256;
+   }
+
+ return Cant;
+}
+void listaparticion(int hex, char sistema[])
+{
+int primero = 131;
+int segundo = 138;
+int tercero = 7;
+int cuarto = 168;
+int quinto = 171;
+
+if(hex==primero){
+char tipo[32] = "linux native";
+strcpy(sistema, tipo);
+//printf("Cadena copiada: %s \n", sistema);
+}
+
+
+if(hex==segundo){
+char tipo[32] = "linux Kernel";
+strcpy(sistema, tipo);
+//printf("Cadena copiada: %s \n", sistema);
+}
+
+
+if(hex==tercero){
+char tipo[32] = "Windows";
+strcpy(sistema, tipo);
+//printf("Cadena copiada: %s \n", sistema);
+}
+
+
+if(hex== cuarto){
+char tipo[32] = "Mac Os-x";
+strcpy(sistema, tipo);
+//printf("Cadena copiada: %s \n", sistema);
+}
+
+
+if(hex== quinto){
+char tipo[32] = "Mac Os-x boot";
+strcpy(sistema, tipo);
+//printf("Cadena copiada: %s \n", sistema);
+}
+
+}
+void CHSvalores(int CHS[], int inicio, char *map){
+  int aux;
+  int a0, a1;
+
+     //Head
+     aux=(int)map[inicio];
+     if(aux<0)
+       aux+=256;
+     CHS[1]=aux;
+
+     //Sector
+     aux=(int)map[inicio +1];
+     if(aux<0)
+       aux+=256;
+     a0=aux/128;
+     a1=aux/64;
+
+     if(a1>=2)
+       a1-=2;
+     aux=aux-((a0*128) +(a1*64));
+     CHS[2]=aux;
+
+     //Cylinder
+     aux=(int)map[inicio +2];
+     if(aux<0)
+       aux+=256;
+     aux=aux+((a0*512) +(a1*256));
+     CHS[0]=aux;
+}
+
+void MostrarDatos(char *map, int pag){
+
+   //Variables de particion
+   int aux;
+   int CHSinicio[3];
+   char tipoparticion[32];
+   int CHSfin[3];
+   unsigned long iniciosector;
+   unsigned long cantidadsectores;
+   char l[128];
+
+   sprintf(l, "Particion %d", pag);
+       mvprintw(1,5,l);
+
+       //Rosa
+       aux=(int)map[0];
+       if(aux!=0)
+        sprintf(l,"Arranca la particion");
+       else
+        sprintf(l,"No arranca la particion");
+
+       mvprintw(2,0,l);
+       //Amarillo
+       CHSvalores(CHSinicio, 1, map);
+       sprintf(l,"Inicio de la particion:\n\tH:%10d\n\tS: %10d\n\tC: %10d", CHSinicio[1], CHSinicio[2], CHSinicio[0]);
+       mvprintw(3,0,l);
+
+       //Azul
+       aux=(int)map[4];
+       if(aux<0)
+         aux+=256;
+       listaparticion(aux,tipoparticion);
+       sprintf(l,"Tipo particion: %s", tipoparticion);
+       mvprintw(7,0,l);
+
+       //Verde
+        CHSvalores(CHSfin, 5, map);
+       sprintf(l,"Fin de la particion:\n\tHead:%10d\n\tSector: %10d\n\tCilindro: %10d\n", CHSfin[1], CHSfin[2], CHSfin[0]);
+       mvprintw(8,0,l);
+
+       //Verde oscuro
+
+       cantidadsectores=valorhex(12, 15, map);
+       sprintf(l, "Cantidad de sectores: %10ld\n", cantidadsectores);
+       mvprintw(13,0,l);
+
+   refresh();
+}
+int leerChar() {
+  int chars[5];
+  int ch,i=0;
+  nodelay(stdscr, TRUE);
+  while((ch = getch()) == ERR); /* Espera activa */
+  ungetch(ch);
+  while((ch = getch()) != ERR) {
+    chars[i++]=ch;
+  }
+  /* convierte a numero con todo lo leido */
+  int res=0;
+  for(int j=0;j<i;j++) {
+    res <<=8;
+    res |= chars[j];
+  }
+  return res;
+}
+
+int main(int argc, char *argv[])
+{
+    if(argc!=2){
+        perror("ERROR");
+        exit(1);
+    }
+    initscr();
+   raw();
+   noecho(); /* No muestres el caracter leido */
+   cbreak(); /* Haz que los caracteres se le pasen al usuario */
+   keypad(stdscr, TRUE);
+   //Abrir Mapa
+   char *map = mapFile(argv[1]);
+     if (map == NULL) {
+     endwin();
+      exit(EXIT_FAILURE);
+      }
+
+   //Guardar el original para guardarlo
+   char *map_origin=map;
+   map+=446;
+   char *lista[] = {"Uno", "Dos", "Tres", "Cuatro" };
+   int i = 0;
+   int c;
+   int n=1;
+   int en=0;
+   unsigned long iniciosector;
+   do {
+      c = leerChar();
+      switch(c) {
+         case KEY_RIGHT:
+            n = (n<4) ? n+1 : 1;
+            break;
+         case KEY_LEFT:
+            n = (n>1) ? n - 1:4;
+             break;
+         case 10:
+           iniciosector=valorhex(8, 11, map+(16*(n-1)));
+           // MostrarParticion(map_origin +(iniciosector*512));
+            en++;
+            break;
+         default:
+            // Nothing
+            break;
+      }
+
+      if(en==0){
+       MostrarDatos(map+(16*(n-1)),n);
+      }
+      move(10,5);
+   } while (c != 'q');
+   endwin();
+   return 0;
+}
+
+char *mapFile(char *filePath) {
+    /* Abre archivo */
+    fd = open(filePath, O_RDONLY);
+    if (fd == -1) {
+    	perror("Error abriendo el archivo");
+	    return(NULL);
+    }
+
+    /* Mapea archivo */
+    struct stat st;
+    fstat(fd,&st);
+    int fs = st.st_size;
+
+    char *map = mmap(0, fs, PROT_READ, MAP_SHARED, fd, 0);
+    if (map == MAP_FAILED) {
+    	close(fd);
+	    perror("Error mapeando el archivo");
+	    return(NULL);
+    }
+
+  return map;
+}
