@@ -46,9 +46,10 @@ void Part_Print(partition_t *part);
 void Header_Print(HFSPlusVolumeHeader *header);
 void ForkData_Print(HFSPlusForkData *fdstruct);
 void ExtentRecord_Print(HFSPlusExtentRecord *erstruct);
-void NodeDescriptor_Print(int start);
-void BTHeader_Print(int start);
-void LeafNode_Print(int start, int records);
+void NodeDescriptor_Print(size_t start);
+void BTHeader_Print(size_t start);
+void LeafNode_Print(size_t start, int records, int next);
+void IndexNode_Print(size_t start, int records);
 
 int main(int argc, char *argv[]){
 
@@ -253,7 +254,7 @@ void ExtentRecord_Print(HFSPlusExtentRecord *erstruct){
                 _CurrBlock--;
             break;
         case 10:
-            NodeDescriptor_Print(BIG_ENDIAN_LONG(erstruct[_CurrBlock]->startBlock));
+            NodeDescriptor_Print(BIG_ENDIAN_LONG(erstruct[_CurrBlock]->startBlock) * _BlockSize + (size_t)_Map + (_Parts[_CurrPart].lba * 512));
             break;
         }
 
@@ -263,14 +264,15 @@ void ExtentRecord_Print(HFSPlusExtentRecord *erstruct){
     clear();
 }
 
-void NodeDescriptor_Print(int start){
-    BTNodeDescriptor *nd = (BTNodeDescriptor*) (_Map + (start * _BlockSize) + (_Parts[_CurrPart].lba * 512));
+void NodeDescriptor_Print(size_t start){
+    BTNodeDescriptor *nd = (BTNodeDescriptor*) start;
 
     int input = getch();
     clear();
 
     while(input != 'q'){
         move(0, 0);
+        printw("%lu\n", (size_t)nd - (size_t)_Map );
         printw("B Link: %d\n", BIG_ENDIAN_LONG(nd->bLink));
         printw("F Link: %d\n", BIG_ENDIAN_LONG(nd->fLink));
         printw("Kind: %d\n", nd->kind);
@@ -285,7 +287,11 @@ void NodeDescriptor_Print(int start){
                 BTHeader_Print(start);
                 break;
             case kBTLeafNode:
-                LeafNode_Print(start, BIG_ENDIAN_SHORT(nd->numRecords));
+                LeafNode_Print(start, BIG_ENDIAN_SHORT(nd->numRecords), BIG_ENDIAN_LONG(nd->fLink));
+                break;
+            case kBTIndexNode:
+                IndexNode_Print(start, BIG_ENDIAN_SHORT(nd->numRecords));
+                break;
             }
             break;
         }
@@ -294,9 +300,8 @@ void NodeDescriptor_Print(int start){
     clear();
 }
 
-void BTHeader_Print(int start){
-    BTHeaderRec *btree = (BTHeaderRec*) (_Map + (_BlockSize * start) + (_Parts[_CurrPart].lba * 512) + sizeof(BTNodeDescriptor));
-
+void BTHeader_Print(size_t start){
+    BTHeaderRec *btree = (BTHeaderRec*) (start + 12);
     int input = getch();
 
     _NodeSize = BIG_ENDIAN_SHORT(btree->nodeSize);
@@ -304,19 +309,27 @@ void BTHeader_Print(int start){
     clear();
     while(input != 'q'){
         move(0, 0);
+        printw("%lu\n", (size_t)btree - (size_t)_Map);
         printw("Attributes: %x\n", BIG_ENDIAN_LONG(btree->attributes));
-        printw("Clump Size: %d\n", BIG_ENDIAN_LONG(btree->clumpSize));
+        printw("Clump Size: %u\n", BIG_ENDIAN_LONG(btree->clumpSize));
         printw("First Leaf Node: %d\n", BIG_ENDIAN_LONG(btree->firstLeafNode));
         printw("Last Leaf Node: %d\n", BIG_ENDIAN_LONG(btree->lastLeafNode));
         printw("Leaf Records: %d\n", BIG_ENDIAN_LONG(btree->leafRecords));
         printw("Tree Depth: %d\n", BIG_ENDIAN_SHORT(btree->treeDepth));
         printw("Free Nodes: %d\n", BIG_ENDIAN_LONG(btree->freeNodes));
-        printw("Root Node: %d\n", BIG_ENDIAN_LONG(btree->rootNode));
+        printw("Root Node: %x\n", BIG_ENDIAN_LONG(btree->rootNode));
         printw("Node Size: %d\n", _NodeSize);
 
         switch (input) {
         case 10:
-            NodeDescriptor_Print((BIG_ENDIAN_LONG(btree->firstLeafNode)) + start);
+            NodeDescriptor_Print((BIG_ENDIAN_LONG(btree->rootNode) * _NodeSize) + start);
+            break;
+        case 'l':
+            NodeDescriptor_Print((BIG_ENDIAN_LONG(btree->firstLeafNode) * _NodeSize) + start);
+            break;
+        case KEY_RIGHT:
+            break;
+        case KEY_LEFT:
             break;
         }
 
@@ -326,26 +339,96 @@ void BTHeader_Print(int start){
 
 }
 
-void LeafNode_Print(int start, int records){
-    size_t dir = (char *)(_Map + (start * _BlockSize) + (_Parts[_CurrPart].lba * 512));
-    size_t offsetDir = dir + _NodeSize - 2;
+void IndexNode_Print(size_t start, int records){
+    size_t dir = start;
+    size_t offsetDir = dir + _NodeSize;
     wchar_t unicode[255];
     int offset;
-    int type;
+    unsigned char select = 1;
 
-    HFSPlusCatalogKey *catalog;
-
+    HFSPlusCatalogKey *ck;
+    int i;
     int input = getch();
     clear();
 
     while(input != 'q'){
         move(0, 0);
+        offset = BIG_ENDIAN_SHORT(*(int*)(offsetDir - select*2));
+        ck = (dir + offset);
+        printw("OD: %lu\n", (offsetDir - (select*2) - (size_t)_Map));
+        printw("select: %d\n", select);
+        printw("Offset: %x\n", offset);
+        printw("Key Length: %u\n", BIG_ENDIAN_SHORT(ck->keyLength));
+        printw("Parent ID: %u\n", BIG_ENDIAN_LONG(ck->parentID));
+        printw("Node Name Length: %d\n", BIG_ENDIAN_SHORT(ck->nodeName.length));
 
-        printw("Hi\n");
+        for (i = 0; i < BIG_ENDIAN_SHORT(ck->nodeName.length); i++){
+            unicode[i] = BIG_ENDIAN_SHORT(ck->nodeName.unicode[i-1]);
+        }
+        unicode[i] = 0;
+
+        printw("Unicode: %ls\n", unicode);
 
         switch (input) {
         case 10:
             break;
+        case KEY_RIGHT:
+            if (select < records)
+                select ++;
+            break;
+        case KEY_LEFT:
+            if (select > 1)
+                select --;
+            break;
+        }
+        input = getch();
+    }
+    clear();
+}
+
+void LeafNode_Print(size_t start, int records, int next){
+    size_t dir = start;
+    size_t offsetDir = dir + _NodeSize;
+    wchar_t unicode[255];
+    int offset;
+    unsigned char select = 1;
+
+    HFSPlusCatalogKey *ck;
+    int i;
+    int input = getch();
+    clear();
+
+    while(input != 'q'){
+        move(0, 0);
+        offset = BIG_ENDIAN_SHORT(*(int*)(offsetDir - select*2));
+        ck = (HFSPlusCatalogKey*) (dir + offset);
+        printw("OD: %lu\n", (offsetDir - (select*2) - (size_t)_Map));
+        printw("select: %d\n", select);
+        printw("Offset: %x\n", offset);
+        printw("Key Length: %u\n", BIG_ENDIAN_SHORT(ck->keyLength));
+        printw("Parent ID: %lu\n", BIG_ENDIAN_LONG(ck->parentID));
+        printw("Node Name Length: %d\n", BIG_ENDIAN_SHORT(ck->nodeName.length));
+
+        for (i = 0; i < BIG_ENDIAN_SHORT(ck->nodeName.length); i++){
+            unicode[i] = BIG_ENDIAN_SHORT(ck->nodeName.unicode[i-1]);
+        }
+        unicode[i] = 0;
+
+        printw("Unicode: %ls\n", unicode);
+
+        switch (input) {
+        case 10:
+            break;
+        case KEY_RIGHT:
+            if (select < records)
+                select ++;
+            break;
+        case KEY_LEFT:
+            if (select > 1)
+                select --;
+            break;
+        case '1':
+            NodeDescriptor_Print(next * _NodeSize + 0xb01e00 + _Map);
         }
         input = getch();
     }
